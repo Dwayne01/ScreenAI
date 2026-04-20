@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+ssl_cert.pem
+ssl_key.pem
+certs/
+/tmp/
+*.log

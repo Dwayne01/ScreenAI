@@ -1,0 +1,1611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ScreenAI</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <style>
+    :root {
+      --bg:         #0d0d10;
+      --surface:    #17171d;
+      --surface2:   #1f1f28;
+      --border:     #2a2a35;
+      --text:       #e2e2e9;
+      --text-muted: #72727d;
+      --accent:     #7c6af7;
+      --accent-dim: #7c6af722;
+      --success:    #34d399;
+      --error:      #f87171;
+      --user-bg:    #1e1b35;
+      --ai-bg:      #17171d;
+      --radius:     14px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────── */
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: var(--bg);
+    }
+
+    .logo {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+      color: var(--accent);
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    .dot.connected  { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .dot.error      { background: var(--error); }
+
+    .provider-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 9px;
+      border-radius: 20px;
+      border: 1px solid transparent;
+    }
+    .provider-badge.claude { color: #a78bfa; background: #7c3aed18; border-color: #7c3aed33; }
+    .provider-badge.openai { color: #34d399; background: #05966918; border-color: #05966933; }
+
+    .hotkey-badge {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 2px 7px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    .spacer { flex: 1; }
+
+    .header-btn {
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .header-btn:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
+    .header-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .header-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .header-btn.primary:hover:not(:disabled) { opacity: 0.88; background: var(--accent); }
+
+    /* ── Chat thread ─────────────────────────────────────────── */
+    .thread {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 20px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 40px;
+    }
+    .empty-icon { font-size: 44px; opacity: 0.25; }
+    .empty-title { font-size: 17px; font-weight: 600; opacity: 0.7; }
+    .empty-sub { font-size: 13px; opacity: 0.5; line-height: 1.6; }
+    .empty-hints { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+    .empty-hint-chip {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      background: var(--surface2);
+    }
+
+    .msg-row {
+      display: flex;
+      gap: 12px;
+      padding: 3px 0;
+      animation: fadeUp 0.2s ease;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-row.user   { flex-direction: row-reverse; }
+    .msg-row.system { justify-content: center; }
+
+    .avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      margin-top: 4px;
+      align-self: flex-start;
+    }
+    .avatar.ai   { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent)33; }
+    .avatar.user { background: #1e1b35; color: #a78bfa; border: 1px solid #7c3aed33; }
+
+    .bubble {
+      max-width: 72%;
+      padding: 11px 15px;
+      border-radius: var(--radius);
+      line-height: 1.6;
+      font-size: 14px;
+      position: relative;
+    }
+
+    .msg-row.user .bubble {
+      background: var(--user-bg);
+      border: 1px solid #7c3aed22;
+      border-top-right-radius: 4px;
+      color: var(--text);
+    }
+
+    .msg-row.ai .bubble {
+      background: var(--ai-bg);
+      border: 1px solid var(--border);
+      border-top-left-radius: 4px;
+    }
+
+    .msg-row.system .bubble {
+      background: transparent;
+      border: none;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 6px 12px;
+    }
+
+    .screenshot-thumb {
+      display: block;
+      width: 100%;
+      max-width: 460px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      transition: border-color 0.15s;
+    }
+    .screenshot-thumb:hover { border-color: var(--accent); }
+
+    .bubble-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .thinking-dots {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      padding: 4px 0;
+    }
+    .thinking-dots span {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.4;
+      animation: blink 1.2s infinite;
+    }
+    .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink {
+      0%, 80%, 100% { opacity: 0.2; transform: scale(0.85); }
+      40%           { opacity: 1;   transform: scale(1); }
+    }
+
+    /* ── Markdown rendering ──────────────────────────────────── */
+    .response-text { word-break: break-word; }
+    .response-text p { margin: 0 0 8px; }
+    .response-text p:last-child { margin-bottom: 0; }
+    .response-text strong { font-weight: 600; color: var(--text); }
+    .response-text em { font-style: italic; color: var(--text-muted); }
+
+    .response-text :not(pre) > code {
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+      font-size: 12px;
+      background: var(--surface2);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: #e5c07b;
+      white-space: nowrap;
+    }
+
+    .response-text pre {
+      margin: 10px 0;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .response-text pre code.hljs {
+      border-radius: 8px;
+      font-size: 12.5px;
+      line-height: 1.55;
+      padding: 14px 16px;
+    }
+
+    .response-text h1 { font-size: 17px; font-weight: 700; margin: 14px 0 6px; }
+    .response-text h2 { font-size: 15px; font-weight: 700; margin: 12px 0 5px; }
+    .response-text h3 { font-size: 13.5px; font-weight: 600; margin: 10px 0 4px; color: var(--text-muted); }
+    .response-text h1, .response-text h2, .response-text h3 { line-height: 1.3; }
+
+    .response-text ul, .response-text ol { padding-left: 22px; margin: 6px 0 8px; }
+    .response-text li { margin-bottom: 4px; line-height: 1.5; }
+    .response-text li > p { margin: 0; }
+
+    .response-text blockquote {
+      border-left: 3px solid var(--accent);
+      margin: 8px 0;
+      padding: 4px 12px;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .response-text table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 10px 0;
+      font-size: 13px;
+    }
+    .response-text th, .response-text td {
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      text-align: left;
+    }
+    .response-text th { background: var(--surface2); font-weight: 600; }
+    .response-text tr:nth-child(even) td { background: #ffffff06; }
+
+    .response-text a { color: var(--accent); text-decoration: none; }
+    .response-text a:hover { text-decoration: underline; }
+
+    .response-text hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+
+    /* ── Code block copy button ──────────────────────────────── */
+    .code-block-wrapper {
+      position: relative;
+      margin: 10px 0;
+    }
+    .copy-code-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      padding: 3px 9px;
+      font-size: 11px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text-muted);
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+      z-index: 1;
+      font-family: inherit;
+    }
+    .code-block-wrapper:hover .copy-code-btn { opacity: 1; }
+    .copy-code-btn:hover { color: var(--text); border-color: var(--accent); }
+
+    /* ── Input bar ───────────────────────────────────────────── */
+    .input-bar {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+
+    .input-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 8px 10px 8px 14px;
+      transition: border-color 0.15s;
+    }
+    .input-row:focus-within { border-color: var(--accent); }
+
+    .chat-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+      resize: none;
+      max-height: 140px;
+      min-height: 24px;
+      font-family: inherit;
+    }
+    .chat-input::placeholder { color: var(--text-muted); }
+
+    .input-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .icon-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      transition: background 0.15s, color 0.15s;
+      font-size: 16px;
+    }
+    .icon-btn:hover { background: var(--surface2); color: var(--text); }
+    .icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .icon-btn.recording {
+      color: var(--error);
+      background: #f8717118;
+      animation: pulse-ring 1.2s ease infinite;
+    }
+    @keyframes pulse-ring {
+      0%   { box-shadow: 0 0 0 0 #f8717144; }
+      70%  { box-shadow: 0 0 0 8px transparent; }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
+
+    .send-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.15s;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    .send-btn:hover:not(:disabled) { opacity: 0.85; }
+    .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .input-hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      text-align: center;
+    }
+
+    .shortcut-legend {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 7px;
+    }
+
+    .shortcut-item {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .shortcut-sep {
+      color: var(--border);
+      font-size: 11px;
+      user-select: none;
+    }
+
+    kbd {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-bottom: 2px solid var(--border);
+      color: var(--text-muted);
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+
+    .attachment-bar {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--surface2);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .attachment-bar.active { display: flex; }
+    .attachment-bar img {
+      height: 36px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .attachment-remove {
+      margin-left: auto;
+      cursor: pointer;
+      opacity: 0.6;
+    }
+    .attachment-remove:hover { opacity: 1; }
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      cursor: zoom-out;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-overlay img {
+      max-width: 95vw;
+      max-height: 92vh;
+      border-radius: 8px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+    }
+
+    /* ── Listen Mode button ──────────────────────────────────── */
+    .header-btn.listen-btn.listening {
+      background: #dc2626;
+      border-color: #dc2626;
+      color: #fff;
+      animation: pulse-listen 1.8s ease infinite;
+    }
+    @keyframes pulse-listen {
+      0%, 100% { box-shadow: 0 0 0 0 #dc262655; }
+      60%       { box-shadow: 0 0 0 9px transparent; }
+    }
+    .listen-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      margin-right: 4px;
+      vertical-align: middle;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .listening .listen-dot {
+      opacity: 1;
+      animation: blink-dot 1s ease infinite;
+    }
+    @keyframes blink-dot {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.25; }
+    }
+
+    /* ── Transcript bubble ───────────────────────────────────── */
+    .msg-row.transcript { justify-content: flex-start; }
+    .msg-row.transcript .bubble {
+      background: #0f1120;
+      border: 1px solid #4338ca28;
+      border-left: 3px solid #6366f1;
+      max-width: 90%;
+    }
+    .transcript-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #818cf8;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .transcript-label-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #818cf8;
+      flex-shrink: 0;
+    }
+    .transcript-label-dot.live { animation: blink 1.2s ease infinite; }
+    .transcript-body {
+      font-size: 13.5px;
+      line-height: 1.65;
+      color: #c4c4d4;
+      white-space: pre-wrap;
+    }
+    .transcript-sep { color: #2d2d4a; margin: 0 3px; user-select: none; }
+
+    /* ── Interview analysis bubble ───────────────────────────── */
+    .msg-row.analysis { justify-content: flex-start; }
+    .msg-row.analysis .bubble {
+      background: #050f05;
+      border: 1px solid #15803d28;
+      border-left: 3px solid #22c55e;
+      max-width: 94%;
+    }
+    .analysis-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #4ade80;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .analysis-label-icon { font-size: 15px; }
+
+    .copy-report-btn {
+      margin-top: 12px;
+      padding: 5px 14px;
+      font-size: 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      font-family: inherit;
+    }
+    .copy-report-btn:hover { border-color: var(--accent); color: var(--text); }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">ScreenAI</div>
+    <div class="status-pill">
+      <div class="dot" id="statusDot" role="status" aria-label="Connection status"></div>
+      <span id="statusLabel">Connecting…</span>
+    </div>
+    <span class="provider-badge" id="providerBadge" style="display:none"></span>
+    <span class="hotkey-badge" id="hotkeyDisplay"></span>
+    <div class="spacer"></div>
+    <button class="header-btn" id="clearBtn" onclick="clearChat()" title="Clear conversation" aria-label="Clear conversation">
+      🗑 Clear
+    </button>
+    <button class="header-btn listen-btn" id="listenBtn" title="Listen Mode — Interview Coach" onclick="toggleListenMode()" aria-label="Toggle listen mode">
+      <span class="listen-dot"></span>🎙 Listen
+    </button>
+    <button class="header-btn primary" id="captureBtn" onclick="triggerCapture()" aria-label="Capture screenshot">
+      📸 Capture
+    </button>
+  </header>
+
+  <!-- Chat thread -->
+  <div class="thread" id="thread" role="log" aria-live="polite" aria-label="Chat messages">
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">🖥️</div>
+      <div class="empty-title">Ready to capture</div>
+      <div class="empty-sub">
+        Press your hotkey or click Capture to screenshot + analyze.<br>
+        Type a question below, or ask about the last screenshot.
+      </div>
+      <div class="empty-hints">
+        <span class="empty-hint-chip">📸 Hotkey captures screen</span>
+        <span class="empty-hint-chip">💬 Type to chat</span>
+        <span class="empty-hint-chip">🎤 Mic to speak</span>
+        <span class="empty-hint-chip">📎 Attach screenshot</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input bar -->
+  <div class="input-bar">
+    <div class="attachment-bar" id="attachmentBar">
+      <img id="attachThumb" src="" alt="Attached screenshot" />
+      <span>Screenshot attached</span>
+      <span class="attachment-remove" onclick="removeAttachment()">✕</span>
+    </div>
+    <div class="input-row">
+      <textarea
+        class="chat-input"
+        id="chatInput"
+        placeholder="Ask about the screenshot, or anything…"
+        rows="1"
+        onkeydown="handleInputKey(event)"
+        oninput="autoResize(this)"
+        aria-label="Chat input"
+      ></textarea>
+      <div class="input-actions">
+        <button class="icon-btn" id="attachBtn" title="Take a screenshot first" aria-label="Attach last screenshot" onclick="attachLastScreenshot()">
+          📎
+        </button>
+        <button class="icon-btn" id="micBtn" title="Voice input" aria-label="Voice input" onclick="toggleMic()">
+          🎤
+        </button>
+        <button class="send-btn" id="sendBtn" title="Send (Enter)" aria-label="Send message" onclick="sendChat()">
+          ↑
+        </button>
+      </div>
+    </div>
+    <div class="shortcut-legend">
+      <span class="shortcut-item"><kbd id="captureKbd"></kbd> Capture</span>
+      <span class="shortcut-sep">·</span>
+      <span class="shortcut-item"><kbd>Enter</kbd> Send</span>
+      <span class="shortcut-sep">·</span>
+      <span class="shortcut-item"><kbd id="ctrlEnterKbd"></kbd>+<kbd>Enter</kbd> Send</span>
+      <span class="shortcut-sep">·</span>
+      <span class="shortcut-item"><kbd>Shift</kbd>+<kbd>Enter</kbd> New line</span>
+      <span class="shortcut-sep">·</span>
+      <span class="shortcut-item"><kbd>📎</kbd> Attach</span>
+    </div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeLightbox()">
+  <img id="modalImg" src="" alt="Full screenshot" onclick="event.stopPropagation()" />
+</div>
+
+<!-- Markdown + syntax highlighting -->
+<script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+let ws;
+let reconnectDelay = 1000;
+let lastScreenshotB64 = null;
+let attachedScreenshot = false;
+let pendingThinkingRow = null;
+let mediaRecorder = null;
+let recordingChunks = [];
+let isRecording = false;
+let providerName = '';
+
+// Streaming chat state
+let streamingRow = null;
+let streamingTextEl = null;
+let streamingText = '';
+let streamingTs = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket — ping interval is outside connect() to prevent timer leak (BUG-02)
+// ─────────────────────────────────────────────────────────────────────────────
+setInterval(() => {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+}, 25000);
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    setStatus('connected', 'Connected');
+    reconnectDelay = 1000;
+    // Re-enable capture button in case it was stuck from a disconnect
+    setCaptureBtn(false);
+  };
+
+  ws.onmessage = (e) => {
+    try { dispatch(JSON.parse(e.data)); }
+    catch(err) { console.error('WS parse error', err); }
+  };
+
+  ws.onclose = () => {
+    setStatus('', 'Disconnected');
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 1.5, 16000);
+  };
+
+  ws.onerror = () => setStatus('error', 'Connection error');
+}
+
+function dispatch(msg) {
+  switch (msg.type) {
+    case 'connected':           return;
+    case 'processing':          return showThinking('user');
+    case 'thinking':            return showThinking('ai');
+    case 'capture':             return handleCapture(msg);
+    case 'chat_stream':         return handleChatStream(msg);
+    case 'chat_response':       return handleChatResponse(msg);
+    case 'error':               return handleError(msg);
+    case 'listen_started':      return;
+    case 'listen_stopped':      return;
+    case 'transcript_chunk':    return handleTranscriptChunk(msg);
+    case 'analyzing_interview': return handleAnalyzingInterview(msg);
+    case 'interview_analysis':  return handleInterviewAnalysis(msg);
+    case 'cleared':             return handleCleared();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message handlers
+// ─────────────────────────────────────────────────────────────────────────────
+function handleCapture(msg) {
+  removePendingThinking();
+  setCaptureBtn(false);
+  lastScreenshotB64 = msg.screenshot;
+  providerName = msg.provider || '';
+  updateProviderBadge(providerName);
+
+  const ts = new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  appendMessage('user', null, msg.screenshot, msg.timestamp, null, `Screenshot at ${ts}`);
+  appendMessage('ai', msg.response, null, msg.timestamp, msg.provider);
+
+  document.getElementById('attachBtn').disabled = false;
+  document.getElementById('attachBtn').title = 'Attach last screenshot';
+  hideEmptyState();
+}
+
+function handleChatStream(msg) {
+  if (!streamingRow) {
+    removePendingThinking();
+    streamingTs = msg.timestamp;
+    streamingText = '';
+
+    const thread = document.getElementById('thread');
+    streamingRow = document.createElement('div');
+    streamingRow.className = 'msg-row ai';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar ai';
+    avatar.textContent = 'AI';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+
+    streamingTextEl = document.createElement('div');
+    streamingTextEl.className = 'response-text';
+    bubble.appendChild(streamingTextEl);
+
+    streamingRow.appendChild(avatar);
+    streamingRow.appendChild(bubble);
+    thread.appendChild(streamingRow);
+    hideEmptyState();
+  }
+  streamingText += msg.chunk;
+  // Show plain text while streaming — markdown renders on completion
+  streamingTextEl.textContent = streamingText;
+  scrollToBottom();
+}
+
+function handleChatResponse(msg) {
+  providerName = msg.provider || '';
+  updateProviderBadge(providerName);
+
+  if (streamingRow && streamingTextEl) {
+    // Finalize: replace plain text with rendered markdown and add metadata
+    streamingTextEl.innerHTML = renderMarkdown(msg.response);
+    const bubble = streamingTextEl.parentElement;
+
+    const meta = document.createElement('div');
+    meta.className = 'bubble-meta';
+    const time = new Date(msg.timestamp);
+    meta.textContent = time.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    if (msg.provider) {
+      const badge = document.createElement('span');
+      badge.className = `provider-badge ${msg.provider}`;
+      badge.textContent = msg.provider;
+      meta.appendChild(badge);
+    }
+    bubble.appendChild(meta);
+
+    streamingRow = null;
+    streamingTextEl = null;
+    streamingText = '';
+    streamingTs = null;
+  } else {
+    removePendingThinking();
+    appendMessage('ai', msg.response, null, msg.timestamp, msg.provider);
+  }
+  hideEmptyState();
+  scrollToBottom();
+}
+
+function handleError(msg) {
+  removePendingThinking();
+  setCaptureBtn(false);
+  // Also clear any half-built streaming bubble
+  if (streamingRow) {
+    streamingRow.remove();
+    streamingRow = null;
+    streamingTextEl = null;
+    streamingText = '';
+  }
+  appendSystemMessage('⚠ ' + (msg.message || 'Unknown error'));
+}
+
+function handleCleared() {
+  const thread = document.getElementById('thread');
+  thread.innerHTML = `
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">🖥️</div>
+      <div class="empty-title">Ready to capture</div>
+      <div class="empty-sub">
+        Press your hotkey or click Capture to screenshot + analyze.<br>
+        Type a question below, or ask about the last screenshot.
+      </div>
+      <div class="empty-hints">
+        <span class="empty-hint-chip">📸 Hotkey captures screen</span>
+        <span class="empty-hint-chip">💬 Type to chat</span>
+        <span class="empty-hint-chip">🎤 Mic to speak</span>
+        <span class="empty-hint-chip">📎 Attach screenshot</span>
+      </div>
+    </div>`;
+  lastScreenshotB64 = null;
+  removeAttachment();
+  document.getElementById('attachBtn').disabled = true;
+  document.getElementById('attachBtn').title = 'Take a screenshot first';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOM helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function hideEmptyState() {
+  const el = document.getElementById('emptyState');
+  if (el) el.remove();
+}
+
+function appendMessage(role, text, screenshotB64, timestamp, provider, screenshotAlt) {
+  const thread = document.getElementById('thread');
+
+  const row = document.createElement('div');
+  row.className = `msg-row ${role}`;
+
+  const avatar = document.createElement('div');
+  avatar.className = `avatar ${role}`;
+  avatar.textContent = role === 'ai' ? 'AI' : 'You';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  if (screenshotB64) {
+    const img = document.createElement('img');
+    img.className = 'screenshot-thumb';
+    img.src = `data:image/jpeg;base64,${screenshotB64}`;
+    img.alt = screenshotAlt || 'Screenshot';
+    img.onclick = () => openLightbox(screenshotB64);
+    bubble.appendChild(img);
+  }
+
+  if (text) {
+    const textEl = document.createElement('div');
+    textEl.className = 'response-text';
+    textEl.innerHTML = renderMarkdown(text);
+    bubble.appendChild(textEl);
+  }
+
+  const meta = document.createElement('div');
+  meta.className = 'bubble-meta';
+  const time = new Date(timestamp);
+  meta.textContent = time.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  if (provider) {
+    const badge = document.createElement('span');
+    badge.className = `provider-badge ${provider}`;
+    badge.textContent = provider;
+    meta.appendChild(badge);
+  }
+  bubble.appendChild(meta);
+
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  scrollToBottom();
+}
+
+function appendUserTextMessage(text, withScreenshot) {
+  const thread = document.getElementById('thread');
+  const ts = new Date().toISOString();
+
+  const row = document.createElement('div');
+  row.className = 'msg-row user';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar user';
+  avatar.textContent = 'You';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  if (withScreenshot && lastScreenshotB64) {
+    const img = document.createElement('img');
+    img.className = 'screenshot-thumb';
+    img.src = `data:image/jpeg;base64,${lastScreenshotB64}`;
+    img.alt = 'Attached screenshot';
+    img.style.maxWidth = '200px';
+    img.onclick = () => openLightbox(lastScreenshotB64);
+    bubble.appendChild(img);
+  }
+
+  const textEl = document.createElement('div');
+  textEl.className = 'response-text';
+  textEl.textContent = text;
+  bubble.appendChild(textEl);
+
+  const meta = document.createElement('div');
+  meta.className = 'bubble-meta';
+  const time = new Date(ts);
+  meta.textContent = time.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  bubble.appendChild(meta);
+
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  scrollToBottom();
+}
+
+function appendSystemMessage(text) {
+  const thread = document.getElementById('thread');
+  const row = document.createElement('div');
+  row.className = 'msg-row system';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  scrollToBottom();
+}
+
+function showThinking(sourceRole) {
+  removePendingThinking();
+  const thread = document.getElementById('thread');
+
+  const row = document.createElement('div');
+  row.className = 'msg-row ai';
+  row.id = 'thinkingRow';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar ai';
+  avatar.textContent = 'AI';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
+
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  pendingThinkingRow = row;
+  scrollToBottom();
+}
+
+function removePendingThinking() {
+  if (pendingThinkingRow) {
+    pendingThinkingRow.remove();
+    pendingThinkingRow = null;
+  }
+}
+
+function scrollToBottom() {
+  const thread = document.getElementById('thread');
+  thread.scrollTop = thread.scrollHeight;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat input
+// ─────────────────────────────────────────────────────────────────────────────
+function handleInputKey(e) {
+  const isPlainEnter  = e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey;
+  const isCtrlEnter   = e.key === 'Enter' && (e.ctrlKey || e.metaKey);
+  if (isPlainEnter || isCtrlEnter) {
+    e.preventDefault();
+    sendChat();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+}
+
+function sendChat() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const withScreenshot = attachedScreenshot && !!lastScreenshotB64;
+
+  appendUserTextMessage(text, withScreenshot);
+  hideEmptyState();
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'chat', text, include_screenshot: withScreenshot }));
+  }
+
+  input.value = '';
+  input.style.height = 'auto';
+  removeAttachment();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Attachment
+// ─────────────────────────────────────────────────────────────────────────────
+function attachLastScreenshot() {
+  if (!lastScreenshotB64) return;
+  attachedScreenshot = true;
+  document.getElementById('attachThumb').src = `data:image/jpeg;base64,${lastScreenshotB64}`;
+  document.getElementById('attachmentBar').classList.add('active');
+}
+
+function removeAttachment() {
+  attachedScreenshot = false;
+  document.getElementById('attachmentBar').classList.remove('active');
+  document.getElementById('attachThumb').src = '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Capture button
+// ─────────────────────────────────────────────────────────────────────────────
+function setCaptureBtn(loading) {
+  const btn = document.getElementById('captureBtn');
+  btn.disabled = loading;
+  btn.textContent = loading ? '⏳ Working…' : '📸 Capture';
+}
+
+async function triggerCapture() {
+  setCaptureBtn(true);
+  hideEmptyState();
+  try {
+    const res = await fetch('/capture', { method: 'POST' });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      appendSystemMessage('⚠ ' + (d.error || 'Capture request failed'));
+      setCaptureBtn(false);
+      return;
+    }
+    // Reduced from 30 s to 10 s — less confusing if WS event doesn't arrive
+    setTimeout(() => setCaptureBtn(false), 10000);
+  } catch (e) {
+    appendSystemMessage('⚠ Network error: ' + e.message);
+    setCaptureBtn(false);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clear chat
+// ─────────────────────────────────────────────────────────────────────────────
+async function clearChat() {
+  if (!document.getElementById('thread').querySelector('.msg-row')) return;
+  if (!confirm('Clear all messages and conversation history?')) return;
+  try {
+    await fetch('/clear', { method: 'POST' });
+    // 'cleared' event arrives via WebSocket and calls handleCleared()
+  } catch (e) {
+    appendSystemMessage('⚠ Clear failed: ' + e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Microphone / voice input
+// ─────────────────────────────────────────────────────────────────────────────
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let speechRecog = null;
+
+function toggleMic() {
+  if (isRecording) stopRecording();
+  else             startRecording();
+}
+
+function startRecording() {
+  const btn = document.getElementById('micBtn');
+
+  if (SpeechRecognition) {
+    speechRecog = new SpeechRecognition();
+    speechRecog.lang = 'en-US';
+    speechRecog.interimResults = false;
+    speechRecog.maxAlternatives = 1;
+
+    speechRecog.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      const input = document.getElementById('chatInput');
+      input.value = (input.value + ' ' + transcript).trim();
+      autoResize(input);
+      stopRecording();
+    };
+
+    speechRecog.onerror = (e) => {
+      appendSystemMessage('🎤 Speech error: ' + e.error);
+      stopRecording();
+    };
+
+    speechRecog.onend = () => {
+      if (isRecording) stopRecording();
+    };
+
+    speechRecog.start();
+    isRecording = true;
+    btn.classList.add('recording');
+    btn.title = 'Stop recording';
+
+  } else if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then((stream) => {
+        mediaRecorder = new MediaRecorder(stream);
+        recordingChunks = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordingChunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordingChunks, { type: 'audio/webm' });
+          stream.getTracks().forEach(t => t.stop());
+          uploadAudio(blob);
+        };
+        mediaRecorder.start();
+        isRecording = true;
+        btn.classList.add('recording');
+        btn.title = 'Stop recording';
+      })
+      .catch((e) => appendSystemMessage('🎤 Mic access denied: ' + e.message));
+  } else {
+    appendSystemMessage('🎤 Microphone not supported in this browser.');
+  }
+}
+
+function stopRecording() {
+  isRecording = false;
+  const btn = document.getElementById('micBtn');
+  btn.classList.remove('recording');
+  btn.title = 'Voice input';
+
+  if (speechRecog) {
+    speechRecog.stop();
+    speechRecog = null;
+  }
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+}
+
+async function uploadAudio(blob) {
+  appendSystemMessage('🎤 Transcribing…');
+  try {
+    const formData = new FormData();
+    formData.append('audio', blob, 'recording.webm');
+    const res = await fetch('/transcribe', { method: 'POST', body: formData });
+    if (!res.ok) throw new Error('Transcription failed');
+    const data = await res.json();
+    if (data.text) {
+      const input = document.getElementById('chatInput');
+      input.value = (input.value + ' ' + data.text).trim();
+      autoResize(input);
+    }
+  } catch (e) {
+    appendSystemMessage('🎤 Transcription error: ' + e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Listen Mode — Interview Coach
+// ─────────────────────────────────────────────────────────────────────────────
+let isListening       = false;
+let listenStream      = null;
+let listenRecorder    = null;
+let listenChunks      = [];
+let listenCycleTimer  = null;
+let listenMimeType    = 'audio/webm';
+let resolveListenStop = null;
+let listenTimerInterval = null;
+let listenStartTime     = null;
+
+const LISTEN_CHUNK_MS = 7000;  // reduced from 15 s for faster transcript feedback
+
+async function toggleListenMode() {
+  if (isListening) await stopListenMode();
+  else             await startListenMode();
+}
+
+async function startListenMode() {
+  try {
+    listenStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (e) {
+    appendSystemMessage('🎙 Microphone access denied: ' + e.message);
+    return;
+  }
+
+  const res = await fetch('/listen/start', { method: 'POST' });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    appendSystemMessage('🎙 ' + (d.error || 'Failed to start listen session.'));
+    listenStream.getTracks().forEach(t => t.stop());
+    listenStream = null;
+    return;
+  }
+
+  const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  listenMimeType = mimes.find(m => MediaRecorder.isTypeSupported(m)) || 'audio/webm';
+
+  isListening = true;
+  updateListenBtn(true);
+  hideEmptyState();
+  appendSystemMessage('🎙 Listen Mode active — recording your interview. Press ⏹ Stop when finished.');
+  startListenCycle();
+}
+
+function startListenCycle() {
+  listenChunks = [];
+  try {
+    listenRecorder = new MediaRecorder(listenStream, { mimeType: listenMimeType });
+  } catch (_) {
+    listenRecorder = new MediaRecorder(listenStream);
+    listenMimeType = listenRecorder.mimeType;
+  }
+
+  listenRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) listenChunks.push(e.data);
+  };
+
+  listenRecorder.onstop = async () => {
+    if (listenChunks.length > 0) {
+      const blob = new Blob(listenChunks, { type: listenMimeType });
+      listenChunks = [];
+      try {
+        await uploadListenChunk(blob);
+      } catch (e) {
+        console.warn('Chunk upload error:', e);
+      }
+    }
+    if (isListening) {
+      startListenCycle();
+    } else if (resolveListenStop) {
+      resolveListenStop();
+      resolveListenStop = null;
+    }
+  };
+
+  listenRecorder.start();
+  listenCycleTimer = setTimeout(() => {
+    if (listenRecorder && listenRecorder.state === 'recording') listenRecorder.stop();
+  }, LISTEN_CHUNK_MS);
+}
+
+async function stopListenMode() {
+  isListening = false;
+  clearTimeout(listenCycleTimer);
+  listenCycleTimer = null;
+  updateListenBtn(false);
+
+  // Wait for current recorder to finish; 10 s timeout prevents indefinite hang
+  if (listenRecorder && listenRecorder.state === 'recording') {
+    await Promise.race([
+      new Promise(resolve => {
+        resolveListenStop = resolve;
+        listenRecorder.stop();
+      }),
+      new Promise(resolve => setTimeout(resolve, 10000)),
+    ]);
+  }
+
+  if (listenStream) {
+    listenStream.getTracks().forEach(t => t.stop());
+    listenStream = null;
+  }
+
+  const liveLabel = document.querySelector('#currentTranscript .transcript-label-dot');
+  if (liveLabel) liveLabel.classList.remove('live');
+  const liveLabelEl = document.querySelector('#currentTranscript .transcript-label');
+  if (liveLabelEl) liveLabelEl.innerHTML = '🎙 Transcript';
+  document.getElementById('currentTranscript')?.removeAttribute('id');
+
+  appendSystemMessage('🧠 Recording complete. Sending to interview coach…');
+  showThinking('ai');
+
+  try {
+    const res = await fetch('/listen/stop', { method: 'POST' });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      removePendingThinking();
+      appendSystemMessage('⚠ ' + (d.error || 'Failed to stop listen session'));
+    }
+  } catch (e) {
+    removePendingThinking();
+    appendSystemMessage('⚠ Network error stopping listen session: ' + e.message);
+  }
+}
+
+async function uploadListenChunk(blob) {
+  if (blob.size < 2000) return;
+  const ext = listenMimeType.includes('mp4') || listenMimeType.includes('m4a') ? 'm4a' : 'webm';
+  const fd  = new FormData();
+  fd.append('audio', blob, `chunk.${ext}`);
+  await fetch('/listen/chunk', { method: 'POST', body: fd });
+  // transcript_chunk arrives via WebSocket
+}
+
+function updateListenBtn(active) {
+  const btn = document.getElementById('listenBtn');
+  if (active) {
+    listenStartTime = Date.now();
+    listenTimerInterval = setInterval(updateListenTimer, 1000);
+    btn.innerHTML = '<span class="listen-dot"></span>⏹ Stop <span id="listenTimer">0:00</span>';
+    btn.classList.add('listening');
+    btn.title = 'Stop recording and analyze interview';
+  } else {
+    if (listenTimerInterval) {
+      clearInterval(listenTimerInterval);
+      listenTimerInterval = null;
+    }
+    btn.innerHTML = '<span class="listen-dot"></span>🎙 Listen';
+    btn.classList.remove('listening');
+    btn.title = 'Listen Mode — Interview Coach';
+  }
+}
+
+function updateListenTimer() {
+  const el = document.getElementById('listenTimer');
+  if (!el || !listenStartTime) return;
+  const secs = Math.floor((Date.now() - listenStartTime) / 1000);
+  const m = Math.floor(secs / 60);
+  const s = (secs % 60).toString().padStart(2, '0');
+  el.textContent = `${m}:${s}`;
+}
+
+// ── Listen Mode WS handlers ───────────────────────────────────────────────────
+
+function handleTranscriptChunk(msg) {
+  hideEmptyState();
+  removePendingThinking();
+
+  const existing = document.getElementById('currentTranscript');
+  if (existing) {
+    const body = existing.querySelector('.transcript-body');
+    body.innerHTML += `<span class="transcript-sep"> · · · </span>${escHtml(msg.text)}`;
+    const meta = existing.querySelector('.bubble-meta');
+    if (meta) meta.textContent = `${msg.chunk_index} chunk${msg.chunk_index !== 1 ? 's' : ''} transcribed`;
+  } else {
+    const thread = document.getElementById('thread');
+    const row    = document.createElement('div');
+    row.className = 'msg-row transcript';
+    row.id = 'currentTranscript';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+
+    const label = document.createElement('div');
+    label.className = 'transcript-label';
+    label.innerHTML = '<span class="transcript-label-dot live"></span>🎙 Live Transcript';
+
+    const body = document.createElement('div');
+    body.className = 'transcript-body';
+    body.textContent = msg.text;
+
+    const meta = document.createElement('div');
+    meta.className = 'bubble-meta';
+    meta.textContent = '1 chunk transcribed';
+
+    bubble.appendChild(label);
+    bubble.appendChild(body);
+    bubble.appendChild(meta);
+    row.appendChild(bubble);
+    thread.appendChild(row);
+  }
+  scrollToBottom();
+}
+
+function handleAnalyzingInterview(_msg) {
+  // thinking indicator already shown by stopListenMode()
+}
+
+function handleInterviewAnalysis(msg) {
+  removePendingThinking();
+  hideEmptyState();
+
+  const thread = document.getElementById('thread');
+  const row    = document.createElement('div');
+  row.className = 'msg-row analysis';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  const label = document.createElement('div');
+  label.className = 'analysis-label';
+  label.innerHTML = '<span class="analysis-label-icon">🏆</span> Interview Coaching Report';
+
+  const content = document.createElement('div');
+  content.className = 'response-text';
+  content.innerHTML = renderMarkdown(msg.report);
+
+  const meta = document.createElement('div');
+  meta.className = 'bubble-meta';
+  meta.textContent = new Date(msg.timestamp).toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'copy-report-btn';
+  copyBtn.textContent = 'Copy Report';
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(msg.report).then(() => {
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy Report'; }, 2000);
+    }).catch(() => {
+      copyBtn.textContent = 'Failed';
+      setTimeout(() => { copyBtn.textContent = 'Copy Report'; }, 2000);
+    });
+  };
+
+  bubble.appendChild(label);
+  bubble.appendChild(content);
+  bubble.appendChild(meta);
+  bubble.appendChild(copyBtn);
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  scrollToBottom();
+}
+
+window.addEventListener('beforeunload', () => {
+  if (isListening) fetch('/listen/stop', { method: 'POST', keepalive: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lightbox
+// ─────────────────────────────────────────────────────────────────────────────
+function openLightbox(b64) {
+  document.getElementById('modalImg').src = `data:image/jpeg;base64,${b64}`;
+  document.getElementById('modalOverlay').classList.add('active');
+}
+
+function closeLightbox() {
+  document.getElementById('modalOverlay').classList.remove('active');
+  document.getElementById('modalImg').src = '';
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeLightbox();
+    return;
+  }
+  const modKey = isMac ? e.metaKey : e.ctrlKey;
+  if (modKey && e.shiftKey && e.code === 'KeyS') {
+    e.preventDefault();
+    triggerCapture();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Copy code button helper
+// ─────────────────────────────────────────────────────────────────────────────
+function copyCode(btn) {
+  const code = decodeURIComponent(btn.dataset.code);
+  navigator.clipboard.writeText(code).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  }).catch(() => {
+    btn.textContent = 'Failed';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function setStatus(state, label) {
+  document.getElementById('statusDot').className = 'dot ' + state;
+  document.getElementById('statusLabel').textContent = label;
+}
+
+function updateProviderBadge(name) {
+  const el = document.getElementById('providerBadge');
+  if (name) {
+    el.textContent = name;
+    el.className = `provider-badge ${name}`;
+    el.style.display = '';
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  return marked.parse(text);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Markdown / syntax highlighting setup
+// ─────────────────────────────────────────────────────────────────────────────
+marked.use({
+  gfm: true,
+  breaks: true,
+  renderer: {
+    code(token) {
+      const lang = token.lang || '';
+      const validLang = lang && hljs.getLanguage(lang);
+      const highlighted = validLang
+        ? hljs.highlight(token.text, { language: lang }).value
+        : hljs.highlightAuto(token.text).value;
+      // Encode code text for safe inline data attribute
+      const encoded = encodeURIComponent(token.text);
+      return `<div class="code-block-wrapper"><button class="copy-code-btn" onclick="copyCode(this)" data-code="${encoded.replace(/"/g, '&quot;')}">Copy</button><pre><code class="hljs language-${escHtml(lang)}">${highlighted}</code></pre></div>`;
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────────────────────────
+const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+
+document.getElementById('hotkeyDisplay').textContent = isMac ? '⌘⇧S' : 'Ctrl+Shift+S';
+document.getElementById('captureKbd').textContent    = isMac ? '⌘⇧S' : 'Ctrl+Shift+S';
+document.getElementById('ctrlEnterKbd').textContent  = isMac ? '⌘'   : 'Ctrl';
+
+document.getElementById('attachBtn').disabled = true;
+connect();
+</script>
+</body>
+</html>
