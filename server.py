@@ -29,6 +29,7 @@ manual_capture_callback: Optional[Callable[[Optional[str]], Coroutine]] = None
 analyze_interview_callback: Optional[Callable[[str], Coroutine]] = None
 handle_chat_callback: Optional[Callable[[str, bool], Coroutine]] = None
 clear_chat_callback: Optional[Callable[[], Coroutine]] = None
+live_ai_callback: Optional[Callable[[str], Coroutine]] = None
 
 # Module-level OpenAI client — created once, reused for all requests
 _openai_client = None
@@ -65,6 +66,28 @@ class ListenSession:
 
 
 listen_session = ListenSession()
+
+
+@dataclass
+class LiveSession:
+    active: bool = False
+    chunks: list[str] = field(default_factory=list)
+    last_chunk_tail: str = ""
+
+    @property
+    def full_transcript(self) -> str:
+        return "\n\n".join(self.chunks)
+
+    def reset(self) -> None:
+        self.active = False
+        self.chunks.clear()
+        self.last_chunk_tail = ""
+
+
+live_session = LiveSession()
+
+# Lock protecting live_session.chunks
+_live_lock = asyncio.Lock()
 
 
 class ConnectionManager:
@@ -265,6 +288,83 @@ async def listen_stop() -> JSONResponse:
     if analyze_interview_callback:
         asyncio.create_task(analyze_interview_callback(transcript))
     return JSONResponse({"status": "analyzing", "chunk_count": chunk_count})
+
+
+@app.post("/live/start")
+async def live_start() -> JSONResponse:
+    if live_session.active:
+        return JSONResponse({"error": "A live session is already active"}, status_code=409)
+    if listen_session.active:
+        return JSONResponse({"error": "A listen session is active — stop it first"}, status_code=409)
+    live_session.reset()
+    live_session.active = True
+    await manager.broadcast({"type": "live_started", "timestamp": datetime.now().isoformat()})
+    return JSONResponse({"status": "started"})
+
+
+@app.post("/live/chunk")
+async def live_chunk(audio: UploadFile = File(...)) -> JSONResponse:
+    async with _live_lock:
+        if not live_session.active:
+            return JSONResponse({"error": "No active live session"}, status_code=400)
+
+    if not OPENAI_API_KEY:
+        return JSONResponse({"error": "OPENAI_API_KEY required for transcription"}, status_code=503)
+    try:
+        client = _get_openai_client()
+        audio_bytes = await audio.read()
+        if len(audio_bytes) < 2000:
+            logger.debug("Live chunk too small (%d bytes) — skipping", len(audio_bytes))
+            return JSONResponse({"text": ""})
+
+        audio_file = io.BytesIO(audio_bytes)
+        ct = audio.content_type or ""
+        audio_file.name = "chunk.m4a" if "mp4" in ct or "m4a" in ct else "chunk.webm"
+
+        prompt_context = live_session.last_chunk_tail or None
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                prompt=prompt_context,
+            ),
+        )
+        text = result.text.strip()
+
+        async with _live_lock:
+            if not text or not live_session.active:
+                return JSONResponse({"text": text})
+            live_session.chunks.append(text)
+            live_session.last_chunk_tail = text[-200:]
+            transcript = live_session.full_transcript
+
+        await manager.broadcast({
+            "type": "live_transcript",
+            "timestamp": datetime.now().isoformat(),
+            "text": text,
+        })
+
+        if live_ai_callback:
+            asyncio.create_task(live_ai_callback(transcript))
+
+        return JSONResponse({"text": text})
+    except Exception as exc:
+        logger.error("Live chunk failed: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/live/stop")
+async def live_stop() -> JSONResponse:
+    async with _live_lock:
+        if not live_session.active:
+            return JSONResponse({"error": "No active live session"}, status_code=400)
+        live_session.active = False
+
+    await manager.broadcast({"type": "live_stopped", "timestamp": datetime.now().isoformat()})
+    return JSONResponse({"status": "stopped"})
 
 
 @app.get("/health")

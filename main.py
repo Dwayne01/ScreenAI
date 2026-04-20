@@ -145,6 +145,25 @@ async def _analyze_interview(transcript: str) -> None:
         })
 
 
+async def _live_response(transcript: str) -> None:
+    """Generate and broadcast a real-time AI response for Live Mode."""
+    ts = datetime.now().isoformat()
+    try:
+        loop = asyncio.get_running_loop()
+        response_text = await loop.run_in_executor(
+            None, _ai_service.live_response, transcript
+        )
+        if response_text:
+            await srv.manager.broadcast({
+                "type": "live_response",
+                "timestamp": ts,
+                "response": response_text,
+                "provider": AI_PROVIDER,
+            })
+    except Exception as exc:
+        logger.error("Live AI response failed: %s", exc, exc_info=True)
+
+
 async def _clear_chat() -> None:
     """Reset AI conversation history and notify all clients."""
     _ai_service.clear_history()
@@ -182,6 +201,7 @@ def main() -> None:
     srv.analyze_interview_callback = _analyze_interview
     srv.handle_chat_callback = handle_chat
     srv.clear_chat_callback = _clear_chat
+    srv.live_ai_callback = _live_response
 
     _loop = asyncio.new_event_loop()
 

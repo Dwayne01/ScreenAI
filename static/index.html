@@ -551,6 +551,77 @@
       50%       { opacity: 0.25; }
     }
 
+    /* ── Live Mode button ────────────────────────────────────── */
+    .header-btn.live-btn.live-active {
+      background: #0d9488;
+      border-color: #0d9488;
+      color: #fff;
+      animation: pulse-live 1.8s ease infinite;
+    }
+    @keyframes pulse-live {
+      0%, 100% { box-shadow: 0 0 0 0 #0d948855; }
+      60%       { box-shadow: 0 0 0 9px transparent; }
+    }
+    .live-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      margin-right: 4px;
+      vertical-align: middle;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .live-active .live-dot {
+      opacity: 1;
+      animation: blink-dot 1s ease infinite;
+    }
+
+    /* ── Live transcript bubble ──────────────────────────────── */
+    .msg-row.live-transcript { justify-content: flex-start; }
+    .msg-row.live-transcript .bubble {
+      background: #071414;
+      border: 1px solid #0d948828;
+      border-left: 3px solid #0d9488;
+      max-width: 90%;
+    }
+    .live-transcript-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #2dd4bf;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .live-transcript-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #2dd4bf;
+      flex-shrink: 0;
+      animation: blink 1.2s ease infinite;
+    }
+
+    /* ── Live AI response bubble ─────────────────────────────── */
+    .msg-row.live-ai .bubble {
+      border-left: 3px solid #0d9488;
+      background: #071414;
+    }
+    .live-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: #2dd4bf;
+      background: #0d948818;
+      border: 1px solid #0d948840;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
     /* ── Transcript bubble ───────────────────────────────────── */
     .msg-row.transcript { justify-content: flex-start; }
     .msg-row.transcript .bubble {
@@ -646,6 +717,9 @@
     </button>
     <button class="header-btn listen-btn" id="listenBtn" title="Listen Mode — Interview Coach" onclick="toggleListenMode()" aria-label="Toggle listen mode">
       <span class="listen-dot"></span>🎙 Listen
+    </button>
+    <button class="header-btn live-btn" id="liveBtn" title="Live Mode — Real-time AI responses" onclick="toggleLiveMode()" aria-label="Toggle live mode">
+      <span class="live-dot"></span>⚡ Live
     </button>
     <button class="header-btn primary" id="captureBtn" onclick="triggerCapture()" aria-label="Capture screenshot">
       📸 Capture
@@ -788,6 +862,10 @@ function dispatch(msg) {
     case 'transcript_chunk':    return handleTranscriptChunk(msg);
     case 'analyzing_interview': return handleAnalyzingInterview(msg);
     case 'interview_analysis':  return handleInterviewAnalysis(msg);
+    case 'live_started':        return;
+    case 'live_stopped':        return;
+    case 'live_transcript':     return handleLiveTranscript(msg);
+    case 'live_response':       return handleLiveResponse(msg);
     case 'cleared':             return handleCleared();
   }
 }
@@ -1269,6 +1347,10 @@ async function toggleListenMode() {
 }
 
 async function startListenMode() {
+  if (isLiveMode) {
+    appendSystemMessage('🎙 Stop Live Mode before starting Listen Mode.');
+    return;
+  }
   try {
     listenStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   } catch (e) {
@@ -1508,7 +1590,238 @@ function handleInterviewAnalysis(msg) {
 
 window.addEventListener('beforeunload', () => {
   if (isListening) fetch('/listen/stop', { method: 'POST', keepalive: true });
+  if (isLiveMode)  fetch('/live/stop',   { method: 'POST', keepalive: true });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live Mode — Real-time conversation assistant
+// ─────────────────────────────────────────────────────────────────────────────
+let isLiveMode        = false;
+let liveStream        = null;
+let liveRecorder      = null;
+let liveChunks        = [];
+let liveAudioCtx      = null;
+let liveAnalyser      = null;
+let liveSilenceTimer  = null;
+let liveMaxChunkTimer = null;
+let liveSilenceFrames = 0;
+let liveSpeechStarted = false;
+let liveMimeType      = 'audio/webm';
+
+const LIVE_SILENCE_THRESHOLD = 0.015; // RMS volume below which we consider silence
+const LIVE_SILENCE_FRAMES    = 20;    // 20 × 100 ms = 2 s of silence triggers send
+const LIVE_MAX_CHUNK_MS      = 30000; // hard cap: send after 30 s regardless
+
+async function toggleLiveMode() {
+  if (isLiveMode) await stopLiveMode();
+  else            await startLiveMode();
+}
+
+async function startLiveMode() {
+  if (isListening) {
+    appendSystemMessage('⚡ Stop Listen Mode before starting Live Mode.');
+    return;
+  }
+  try {
+    liveStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (e) {
+    appendSystemMessage('⚡ Microphone access denied: ' + e.message);
+    return;
+  }
+
+  const res = await fetch('/live/start', { method: 'POST' });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    appendSystemMessage('⚡ ' + (d.error || 'Failed to start live session.'));
+    liveStream.getTracks().forEach(t => t.stop());
+    liveStream = null;
+    return;
+  }
+
+  const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  liveMimeType = mimes.find(m => MediaRecorder.isTypeSupported(m)) || 'audio/webm';
+
+  isLiveMode = true;
+  updateLiveBtn(true);
+  hideEmptyState();
+  appendSystemMessage('⚡ Live Mode active — AI will respond during pauses in speech.');
+
+  // AudioContext for silence detection
+  liveAudioCtx  = new (window.AudioContext || window.webkitAudioContext)();
+  liveAnalyser  = liveAudioCtx.createAnalyser();
+  liveAnalyser.fftSize = 512;
+  const source  = liveAudioCtx.createMediaStreamSource(liveStream);
+  source.connect(liveAnalyser);
+
+  liveSilenceFrames = 0;
+  liveSpeechStarted = false;
+  startLiveRecording();
+  detectLiveSilence();
+}
+
+function startLiveRecording() {
+  liveChunks = [];
+  try {
+    liveRecorder = new MediaRecorder(liveStream, { mimeType: liveMimeType });
+  } catch (_) {
+    liveRecorder = new MediaRecorder(liveStream);
+    liveMimeType = liveRecorder.mimeType;
+  }
+
+  liveRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) liveChunks.push(e.data);
+  };
+
+  liveRecorder.onstop = async () => {
+    if (liveMaxChunkTimer) { clearTimeout(liveMaxChunkTimer); liveMaxChunkTimer = null; }
+    if (liveChunks.length > 0) {
+      const blob = new Blob(liveChunks, { type: liveMimeType });
+      liveChunks = [];
+      if (blob.size >= 2000) {
+        try { await uploadLiveChunk(blob); } catch (e) { console.warn('Live chunk error:', e); }
+      }
+    }
+    if (isLiveMode) {
+      liveSpeechStarted = false;
+      liveSilenceFrames = 0;
+      startLiveRecording();
+    }
+  };
+
+  liveRecorder.start();
+
+  liveMaxChunkTimer = setTimeout(() => {
+    if (liveRecorder && liveRecorder.state === 'recording') liveRecorder.stop();
+  }, LIVE_MAX_CHUNK_MS);
+}
+
+function detectLiveSilence() {
+  if (!isLiveMode) return;
+
+  const data = new Uint8Array(liveAnalyser.frequencyBinCount);
+  liveAnalyser.getByteTimeDomainData(data);
+
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    const v = (data[i] - 128) / 128;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / data.length);
+
+  if (rms > LIVE_SILENCE_THRESHOLD) {
+    liveSilenceFrames = 0;
+    liveSpeechStarted = true;
+  } else if (liveSpeechStarted) {
+    liveSilenceFrames++;
+    if (liveSilenceFrames >= LIVE_SILENCE_FRAMES) {
+      liveSilenceFrames = 0;
+      liveSpeechStarted = false;
+      if (liveRecorder && liveRecorder.state === 'recording') liveRecorder.stop();
+    }
+  }
+
+  liveSilenceTimer = setTimeout(detectLiveSilence, 100);
+}
+
+async function stopLiveMode() {
+  isLiveMode = false;
+  if (liveSilenceTimer)  { clearTimeout(liveSilenceTimer);  liveSilenceTimer  = null; }
+  if (liveMaxChunkTimer) { clearTimeout(liveMaxChunkTimer); liveMaxChunkTimer = null; }
+
+  if (liveRecorder && liveRecorder.state === 'recording') liveRecorder.stop();
+
+  if (liveAudioCtx) { liveAudioCtx.close().catch(() => {}); liveAudioCtx = null; liveAnalyser = null; }
+  if (liveStream)   { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
+
+  updateLiveBtn(false);
+  try { await fetch('/live/stop', { method: 'POST' }); } catch (_) {}
+  appendSystemMessage('⚡ Live Mode stopped.');
+}
+
+async function uploadLiveChunk(blob) {
+  const ext = liveMimeType.includes('mp4') || liveMimeType.includes('m4a') ? 'm4a' : 'webm';
+  const fd  = new FormData();
+  fd.append('audio', blob, `chunk.${ext}`);
+  await fetch('/live/chunk', { method: 'POST', body: fd });
+  // live_transcript and live_response arrive via WebSocket
+}
+
+function updateLiveBtn(active) {
+  const btn = document.getElementById('liveBtn');
+  if (active) {
+    btn.innerHTML = '<span class="live-dot"></span>⏹ Live';
+    btn.classList.add('live-active');
+    btn.title = 'Stop Live Mode';
+  } else {
+    btn.innerHTML = '<span class="live-dot"></span>⚡ Live';
+    btn.classList.remove('live-active');
+    btn.title = 'Live Mode — Real-time AI responses';
+  }
+}
+
+// ── Live Mode WS handlers ──────────────────────────────────────────────────────
+
+function handleLiveTranscript(msg) {
+  hideEmptyState();
+  const thread = document.getElementById('thread');
+  const row    = document.createElement('div');
+  row.className = 'msg-row live-transcript';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  const label = document.createElement('div');
+  label.className = 'live-transcript-label';
+  label.innerHTML = '<span class="live-transcript-dot"></span>⚡ Live';
+
+  const body = document.createElement('div');
+  body.className = 'transcript-body';
+  body.textContent = msg.text;
+
+  const meta = document.createElement('div');
+  meta.className = 'bubble-meta';
+  meta.textContent = new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+  bubble.appendChild(label);
+  bubble.appendChild(body);
+  bubble.appendChild(meta);
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  scrollToBottom();
+}
+
+function handleLiveResponse(msg) {
+  hideEmptyState();
+  const thread = document.getElementById('thread');
+  const row    = document.createElement('div');
+  row.className = 'msg-row live-ai';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar ai';
+  avatar.textContent = 'AI';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  const textEl = document.createElement('div');
+  textEl.className = 'response-text';
+  textEl.innerHTML = renderMarkdown(msg.response);
+  bubble.appendChild(textEl);
+
+  const meta = document.createElement('div');
+  meta.className = 'bubble-meta';
+  meta.textContent = new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  const badge = document.createElement('span');
+  badge.className = 'live-badge';
+  badge.textContent = '⚡ live';
+  meta.appendChild(badge);
+  bubble.appendChild(meta);
+
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  scrollToBottom();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lightbox

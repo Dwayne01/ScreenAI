@@ -8,6 +8,12 @@ from config import AI_MODEL, AI_PROMPT, AI_PROVIDER, ANTHROPIC_API_KEY, OPENAI_A
 
 logger = logging.getLogger(__name__)
 
+LIVE_ASSISTANT_PROMPT = """\
+You are a real-time conversation assistant. Based on the conversation transcript, \
+provide brief, helpful responses when there's a pause. Keep responses concise \
+(2-3 sentences max). Focus on facts, suggestions, or clarifications that would \
+help the speaker."""
+
 INTERVIEW_COACH_PROMPT = """\
 You are an expert interview coach with 20+ years of experience conducting mock interviews across \
 software engineering, product management, consulting, finance, and general professional roles. \
@@ -113,6 +119,10 @@ class AIService(ABC):
         """Analyze a full interview transcript and return a coaching report."""
 
     @abstractmethod
+    def live_response(self, transcript: str) -> str:
+        """Generate a brief real-time response based on accumulated conversation transcript."""
+
+    @abstractmethod
     def clear_history(self) -> None:
         """Reset conversation history."""
 
@@ -192,6 +202,15 @@ class ClaudeService(AIService):
         )
         return response.content[0].text or ""
 
+    def live_response(self, transcript: str) -> str:
+        response = self.client.messages.create(
+            model=self._model,
+            max_tokens=256,
+            system=LIVE_ASSISTANT_PROMPT,
+            messages=[{"role": "user", "content": f"Conversation so far:\n\n{transcript}"}],
+        )
+        return response.content[0].text or ""
+
 
 class OpenAIService(AIService):
     def __init__(self) -> None:
@@ -263,6 +282,17 @@ class OpenAIService(AIService):
             messages=[
                 {"role": "system", "content": INTERVIEW_COACH_PROMPT},
                 {"role": "user", "content": f"Here is the interview transcript:\n\n{transcript}"},
+            ],
+        )
+        return response.choices[0].message.content or ""
+
+    def live_response(self, transcript: str) -> str:
+        response = self.client.chat.completions.create(
+            model=self._model,
+            max_tokens=256,
+            messages=[
+                {"role": "system", "content": LIVE_ASSISTANT_PROMPT},
+                {"role": "user", "content": f"Conversation so far:\n\n{transcript}"},
             ],
         )
         return response.choices[0].message.content or ""
